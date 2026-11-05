@@ -1,0 +1,159 @@
+{
+  "accounts": [{
+    "attrs": {
+      "accountName": "Wendy Appleseed", "name": "Wendy Appleseed", "avatar": "profile-pic.png",
+      "email": "wendy.c.appleseed@gmail.com", "uuid": "D4RI47B7BJDT25C2LWA7LEJLHZ", "domain": "https://my.1password.com/"
+    },
+    "vaults": [
+      {
+        "attrs": {"uuid": "rr3lr6c2opoggvrete23q72ahi", "desc": "", "avatar": "pic.png", "name": "Personal", "type": "P"},
+        "items": [
+          {
+            "uuid": "fkruyzrldvizuqlnavfj3gltfe", "favIndex": 1, "createdAt": 1614298956, "updatedAt": 1635346445,
+            "state": "active", "categoryUuid": "001",
+            "details": {
+              "loginFields": [
+                {"value": "wendy@example.com", "id": "", "name": "username", "fieldType": "T", "designation": "username"},
+                {"value": "most-secure-password-ever!", "id": "", "name": "password", "fieldType": "P", "designation": "password"}
+              ],
+              "notesPlain": "This is a note. *bold*! _italic_!",
+              "sections": [
+                {"title": "Security", "name": "Section_oazxddhvftfknycbbmh5ntwfa4", "fields": [
+                  {"title": "PIN", "id": "CCEF647B399604E8F6Q6C8C3W31AFD407", "value": {"concealed": "12345"},
+                   "indexAtSource": 0, "guarded": false, "multiline": false, "dontGenerate": false,
+                   "inputTraits": {"keyboard": "default", "correction": "default", "capitalization": "default"}}
+                ]},
+                {"title": "", "name": "", "fields": [
+                  {"title": "sign in with", "id": "sso", "value": {"ssoLogin": {"provider": "google", "item": {"vaultUuid": "rr3lr6c2opoggvrete23q72ahi", "itemUuid": "totpitem0000000000000000001"}}}},
+                  {"title": "Recovery email", "id": "recovery", "value": {"email": {"email_address": "recovery@example.com", "provider": null}}}
+                ]}
+              ],
+              "passwordHistory": [{"value": "12345password", "time": 1458322355}]
+            },
+            "overview": {
+              "subtitle": "", "title": "Dropbox", "url": "https://www.dropbox.com/", "ps": 100, "pbe": 86.13621, "pgrng": true,
+              "urls": [
+                {"label": "", "url": "https://www.dropbox.com/"},
+                {"label": "mobile", "url": "https://m.dropbox.com/"}
+              ],
+              "tags": ["cloud", "storage"]
+            }
+          },
+          {
+            "uuid": "totpitem0000000000000000001", "favIndex": 0, "createdAt": 1600000000, "updatedAt": 1600000500,
+            "state": "active", "categoryUuid": "001",
+            "details": {
+              "loginFields": [
+                {"value": "wendy", "id": "", "name": "user", "fieldType": "T", "designation": "username"},
+                {"value": "acme-pass", "id": "", "name": "pw", "fieldType": "P", "designation": "password"}
+              ],
+              "notesPlain": "",
+              "sections": [{"title": "", "name": "", "fields": [
+                {"title": "one-time password", "id": "TOTP_A", "value": {"totp": "JBSWY3DPEHPK3PXP"}},
+                {"title": "second one-time password", "id": "TOTP_B", "value": {"totp": "otpauth://totp/Acme:wendy?secret=ABCDEFGH&issuer=Acme"}}
+              ]}]
+            },
+            "overview": {"subtitle": "wendy", "title": "Acme Portal", "url": "https://acme.example/login", "urls": [{"label": "", "url": "https://acme.example/login"}], "tags": []}
+          },
+          {
+            "uuid": "identity00000000000000001", "favIndex": 0, "createdAt": 1500000000, "updatedAt": 1500000100,
+            "state": "active", "categoryUuid": "004",
+            "details": {
+              "loginFields": [], "notesPlain": "",
+              "sections": [
+                {"title": "Identification", "name": "name", "fields": [
+                  {"title": "first name", "id": "firstname", "value": {"string": "Wendy"}},
+                  {"title": "gender", "id": "gender", "value": {"gender": "female"}},
+                  {"title": "birth date", "id": "birthdate", "value": {"date": 631152000}}
+                ]},
+                {"title": "Address", "name": "address", "fields": [
+                  {"title": "address", "id": "address", "value": {"address": {"street": "1 Infinite Loop", "city": "Cupertino", "state": "CA", "zip": "95014", "country": "us"}}},
+                  {"title": "default phone", "id": "defphone", "value": {"phone": "555-0100"}},
+                  {"title": "email", "id": "email", "value": {"email": {"email_address": "wendy@example.com"}}}
+                ]}
+              ]
+            },
+            "overview": {"subtitle": "Wendy Appleseed", "title": "Wendy Identity", "url": "", "urls": [], "tags": []}
+          },
+          {
+            "uuid": "creditcard00000000000001", "favIndex": 0, "createdAt": 1550000000, "updatedAt": 1550000900,
+            "state": "active", "categoryUuid": "002",
+            "details": {
+              "loginFields": [], "notesPlain": "",
+              "sections": [{"title": "", "name": "", "fields": [
+                {"title": "type", "id": "type", "value": {"creditCardType": "visa"}},
+                {"title": "number", "id": "ccnum", "value": {"creditCardNumber": "4111111111111111"}},
+                {"title": "verification number", "id": "cvv", "value": {"concealed": "123"}},
+                {"title": "expiry date", "id": "expiry", "value": {"monthYear": 202811}},
+                {"title": "cardholder name", "id": "cardholder", "value": {"string": "Wendy Appleseed"}}
+              ]}]
+            },
+            "overview": {"subtitle": "4111", "title": "Visa", "url": "", "urls": [], "tags": ["finance"]}
+          },
+          {
+            "uuid": "sshserver0000000000000001", "favIndex": 0, "createdAt": 1580000000, "updatedAt": 1580000400,
+            "state": "active", "categoryUuid": "114",
+            "details": {
+              "loginFields": [], "notesPlain": "",
+              "sections": [{"title": "", "name": "", "fields": [
+                {"title": "private key", "id": "private_key", "value": {"sshKey": {
+                  "privateKey": "-----BEGIN OPENSSH PRIVATE KEY-----\nQUJDREVGRw==\n-----END OPENSSH PRIVATE KEY-----\n",
+                  "metadata": {"privateKey": "", "publicKey": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGolden", "fingerprint": "SHA256:goldenfingerprint", "keyType": "ed25519"}}}}
+              ]}]
+            },
+            "overview": {"subtitle": "", "title": "Build server key", "url": "", "urls": [], "tags": []}
+          },
+          {
+            "uuid": "docitem00000000000000001", "favIndex": 0, "createdAt": 1590000000, "updatedAt": 1590000001,
+            "state": "active", "categoryUuid": "006",
+            "details": {
+              "loginFields": [], "notesPlain": "scan of passport",
+              "documentAttributes": {"fileName": "Passport Photo.png", "documentId": "poegva18p5aejemc6rk8bpldqq", "decryptedSize": 49}
+            },
+            "overview": {"subtitle": "Passport Photo.png", "title": "Passport", "url": "", "urls": [], "tags": []}
+          },
+          {
+            "uuid": "notewithfile00000000000001", "favIndex": 0, "createdAt": 1595000000, "updatedAt": 1595000002,
+            "state": "active", "categoryUuid": "003",
+            "details": {
+              "loginFields": [], "notesPlain": "see attached",
+              "sections": [{"title": "Attachments", "name": "attachments", "fields": [
+                {"title": "My movie.mp4", "id": "o2xjvw2q5j2yx6rtpxfjdqopom", "value": {"file": {"fileName": "My movie.mp4", "documentId": "o2xjvw2q5j2yx6rtpxfjdqopom", "decryptedSize": 64}}}
+              ]}]
+            },
+            "overview": {"subtitle": "", "title": "Holiday video", "url": "", "urls": [], "tags": []}
+          },
+          {
+            "uuid": "archived0000000000000001", "favIndex": 0, "createdAt": 1400000000, "updatedAt": 1400000001,
+            "state": "archived", "categoryUuid": "001",
+            "details": {"loginFields": [{"value": "old", "id": "", "name": "u", "fieldType": "T", "designation": "username"}], "notesPlain": "", "password": "legacy-password"},
+            "overview": {"subtitle": "old", "title": "Old forum", "url": "https://forum.example", "urls": [], "tags": []}
+          },
+          {
+            "uuid": "trashed00000000000000001", "favIndex": 0, "createdAt": 1400000000, "updatedAt": 1400000001,
+            "state": "trashed", "categoryUuid": "001",
+            "details": {"loginFields": [], "notesPlain": ""},
+            "overview": {"subtitle": "", "title": "Deleted item", "url": "", "urls": [], "tags": []}
+          }
+        ]
+      },
+      {
+        "attrs": {"uuid": "workvault0000000000000001", "desc": "", "avatar": "", "name": "Work", "type": "U"},
+        "items": [
+          {
+            "uuid": "fkruyzrldvizuqlnavfj3gltfe", "favIndex": 0, "createdAt": 1620000000, "updatedAt": 1620000100,
+            "state": "active", "categoryUuid": "001",
+            "details": {
+              "loginFields": [
+                {"value": "wendy@work.example", "id": "", "name": "username", "fieldType": "T", "designation": "username"},
+                {"value": "work-pass", "id": "", "name": "password", "fieldType": "P", "designation": "password"}
+              ],
+              "notesPlain": ""
+            },
+            "overview": {"subtitle": "", "title": "Work Dropbox", "url": "https://work.dropbox.example/", "urls": [], "tags": []}
+          }
+        ]
+      }
+    ]
+  }]
+}

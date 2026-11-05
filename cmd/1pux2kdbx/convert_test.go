@@ -3,6 +3,7 @@ package main
 import (
 	"archive/zip"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -106,6 +107,14 @@ func open(t *testing.T, path string) (*kp.Database, map[string]kp.Entry) {
 			if _, dup := entries[key]; dup {
 				t.Errorf("duplicate entry %s", key)
 			}
+			// KeePassXC refuses to open a database with repeated attribute keys.
+			seen := map[string]bool{}
+			for _, v := range e.Values {
+				if seen[v.Key] {
+					t.Errorf("%s: duplicate attribute %q", key, v.Key)
+				}
+				seen[v.Key] = true
+			}
 			entries[key] = e
 		}
 	}
@@ -149,7 +158,14 @@ func baseExport(t *testing.T, path, bankPass string, bankUpdated int64, extra ..
 		fieldOf("one-time password", "totp", "JBSWY3DPEHPK3PXP"),
 		fieldOf("recovery code", "concealed", "r-123"),
 	)
-	personal := append([]map[string]any{mail, login("bank", "Bank", "me", bankPass, bankUpdated), ssh, doc}, extra...)
+	bank := login("bank", "Bank", "me", bankPass, bankUpdated)
+	if bankPass != "bank-pass" {
+		// 1Password records the replaced password in the item's history.
+		bank["details"].(map[string]any)["passwordHistory"] = []any{
+			map[string]any{"value": "bank-pass", "time": bankUpdated},
+		}
+	}
+	personal := append([]map[string]any{mail, bank, ssh, doc}, extra...)
 	write1pux(t, path, map[string]string{"d1__passport.pdf": "PDFDATA"},
 		vaultOf("vpersonal", "Personal", personal...),
 		vaultOf("vwork", "Work", login("mail", "Work mail", "me@work.example", "work-pass", 1700000000)),
@@ -282,6 +298,19 @@ func TestMergeEndToEnd(t *testing.T) {
 	_, again := open(t, backup)
 	if len(again) != len(after) {
 		t.Errorf("second merge changed entry count %d -> %d", len(after), len(again))
+	}
+	snaps := func(es map[string]kp.Entry) []string {
+		var out []string
+		for _, h := range es["Personal/Bank"].Histories {
+			for _, s := range h.Entries {
+				out = append(out, fmt.Sprintf("%s@%d", s.GetPassword(), s.Times.LastModificationTime.Time.Unix()))
+			}
+		}
+		return out
+	}
+	t.Logf("Bank history after merges: %v", snaps(again))
+	if a, b := snaps(after), snaps(again); fmt.Sprint(a) != fmt.Sprint(b) {
+		t.Errorf("second merge changed Bank history %v -> %v", a, b)
 	}
 }
 
