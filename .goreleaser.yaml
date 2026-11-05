@@ -1,0 +1,63 @@
+version: 2
+
+project_name: 1pux2kdbx
+
+before:
+  hooks:
+    - go mod download
+
+builds:
+  - main: ./cmd/1pux2kdbx
+    binary: 1pux2kdbx
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X main.version={{ .Version }}
+
+archives:
+  - formats: [tar.gz]
+    name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - LICENSE
+
+homebrew_casks:
+  - repository:
+      owner: jigsmiths
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    homepage: "https://github.com/jigsmiths/1pux2kdbx"
+    description: "Convert 1Password 1PUX exports to KeePass kdbx with stable UUIDs"
+    license: "MIT"
+    custom_block: |
+      auto_updates true
+
+      postflight_steps do
+        run "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "{{ "{{" }}staged_path{{ "}}" }}/1pux2kdbx"]
+      end
+
+checksum:
+  name_template: checksums.txt
+
+signs:
+  - cmd: cosign
+    artifacts: checksum
+    signature: "${artifact}.sigstore.json"
+    args: ["sign-blob", "--yes", "--bundle=${signature}", "${artifact}"]
+    output: true
+
+release:
+  replace_existing_artifacts: true
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"

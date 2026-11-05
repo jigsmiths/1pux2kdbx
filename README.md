@@ -12,7 +12,13 @@ items are left alone.
 ## Install
 
 ```sh
-go install github.com/jigsmiths/1pux2kdbx@latest
+brew install jigsmiths/tap/1pux2kdbx
+```
+
+or
+
+```sh
+go install github.com/jigsmiths/1pux2kdbx/cmd/1pux2kdbx@latest
 ```
 
 ## Use
@@ -23,10 +29,11 @@ One-off conversion:
 1pux2kdbx -in export.1pux -out backup.kdbx
 ```
 
-Ongoing sync into a long-lived backup (dry-run, confirm, merge):
+Ongoing sync into a long-lived backup (dry-run, confirm, merge), from a clone
+of this repo:
 
 ```sh
-./sync.sh ~/Downloads/1PasswordExport-*.1pux ~/Passwords/backup.kdbx
+just sync ~/Downloads/1PasswordExport-*.1pux ~/Passwords/backup.kdbx
 ```
 
 The password is read from `KDBX_PASSWORD` or prompted. Point KeePassium at the
@@ -48,14 +55,15 @@ The kdbx uses Argon2d with 64 MiB and 10 iterations, matching KeePassXC's defaul
 All timestamps come from the export, so converting the same export twice gives
 entries that merge without conflict warnings.
 
-## Test
+## Develop
 
 ```sh
-go test ./...
+just setup   # git hooks
+just check   # gofmt, golangci-lint, tests
 ```
 
 The end-to-end test runs the real `keepassxc-cli merge` and skips if it is not
-installed. Set `KEEPASSXC_CLI` to point at the macOS app bundle binary.
+installed. `KEEPASSXC_CLI` defaults to the macOS app bundle binary.
 
 ## Limits
 
