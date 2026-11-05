@@ -54,14 +54,16 @@ func write1pux(t *testing.T, path string, files map[string]string, vaults ...map
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	zw := zip.NewWriter(f)
 	add := func(name, body string) {
 		w, err := zw.Create(name)
 		if err != nil {
 			t.Fatal(err)
 		}
-		w.Write([]byte(body))
+		if _, err := w.Write([]byte(body)); err != nil {
+			t.Fatal(err)
+		}
 	}
 	add("export.data", string(data))
 	for name, body := range files {
@@ -88,7 +90,7 @@ func open(t *testing.T, path string) (*kp.Database, map[string]kp.Entry) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	db := kp.NewDatabase()
 	db.Credentials = kp.NewPasswordCredentials(testPassword)
 	if err := kp.NewDecoder(f).Decode(db); err != nil {
@@ -280,5 +282,72 @@ func TestMergeEndToEnd(t *testing.T) {
 	_, again := open(t, backup)
 	if len(again) != len(after) {
 		t.Errorf("second merge changed entry count %d -> %d", len(after), len(again))
+	}
+}
+
+// TestSyncRecipe drives `just sync` the way a user does: first run creates the
+// backup, a declined merge leaves it alone, an accepted merge applies it.
+func TestSyncRecipe(t *testing.T) {
+	just, err := exec.LookPath("just")
+	if err != nil {
+		t.Skip("just not found")
+	}
+	cli := os.Getenv("KEEPASSXC_CLI")
+	if cli == "" {
+		cli = "keepassxc-cli"
+	}
+	cliPath, err := exec.LookPath(cli)
+	if err != nil {
+		t.Skip("keepassxc-cli not found")
+	}
+
+	dir := t.TempDir()
+	a, b := filepath.Join(dir, "a.1pux"), filepath.Join(dir, "b.1pux")
+	backup := filepath.Join(dir, "backup.kdbx")
+	baseExport(t, a, "bank-pass", 1700000000)
+	baseExport(t, b, "new-bank-pass", 1700000900, login("shop", "Shop", "me", "shop-pass", 1700000500))
+
+	sync := func(export, answer string) (string, error) {
+		cmd := exec.Command(just, "sync", export, backup)
+		cmd.Dir = "../.."
+		cmd.Env = append(os.Environ(), "KDBX_PASSWORD="+testPassword, "KEEPASSXC_CLI="+cliPath)
+		cmd.Stdin = strings.NewReader(answer)
+		out, err := cmd.CombinedOutput()
+		return string(out), err
+	}
+
+	if out, err := sync(a, ""); err != nil || !strings.Contains(out, "created") {
+		t.Fatalf("first run: %v\n%s", err, out)
+	}
+	if _, err := os.Stat(backup + ".bak"); err == nil {
+		t.Error("first run left a .bak file")
+	}
+	_, first := open(t, backup)
+	original, err := os.ReadFile(backup)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if out, err := sync(b, "n\n"); err == nil {
+		t.Fatalf("declined merge exited 0\n%s", out)
+	}
+	if now, err := os.ReadFile(backup); err != nil || string(now) != string(original) {
+		t.Error("declined merge changed the backup")
+	}
+
+	out, err := sync(b, "y\n")
+	if err != nil || !strings.Contains(out, "merged into") {
+		t.Fatalf("accepted merge: %v\n%s", err, out)
+	}
+	_, merged := open(t, backup)
+	if len(merged) != len(first)+1 {
+		t.Errorf("entries after merge = %d, want %d", len(merged), len(first)+1)
+	}
+	bank := merged["Personal/Bank"]
+	if got := bank.GetPassword(); got != "new-bank-pass" {
+		t.Errorf("Bank password = %q, want new-bank-pass", got)
+	}
+	if prev, err := os.ReadFile(backup + ".bak"); err != nil || string(prev) != string(original) {
+		t.Error(".bak is not the pre-merge backup")
 	}
 }

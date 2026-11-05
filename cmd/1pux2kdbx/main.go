@@ -12,11 +12,20 @@ import (
 	"golang.org/x/term"
 )
 
+// version is stamped by goreleaser via ldflags.
+var version = "dev"
+
 func main() {
 	in := flag.String("in", "", "path to the 1Password .1pux export")
 	out := flag.String("out", "", "path of the .kdbx file to write")
 	name := flag.String("name", "1Password Backup", "database name and root group name")
+	showVersion := flag.Bool("version", false, "print the version and exit")
 	flag.Parse()
+
+	if *showVersion {
+		fmt.Println(version)
+		return
+	}
 
 	if *in == "" || *out == "" {
 		flag.Usage()

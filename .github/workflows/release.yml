@@ -1,0 +1,74 @@
+name: release
+
+on:
+  workflow_run: # after ci passed on main
+    workflows: [ci]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch: # publish the latest tag again, after a failed release
+
+permissions:
+  contents: write
+  id-token: write # keyless signing of checksums.txt
+
+concurrency: release
+
+jobs:
+  release:
+    if: >-
+      github.ref == 'refs/heads/main' && (github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push'))
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }} # the commit ci tested
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: sigstore/cosign-installer@v4.1.2
+        with:
+          cosign-release: v3.1.4
+      - run: go install github.com/caarlos0/svu/v3@v3.4.0
+      - name: Tag the next version, if the commits call for one
+        id: tag
+        run: |
+          current=$(svu current)
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
+            if ! git rev-parse -q --verify "refs/tags/$current" > /dev/null; then
+              echo "No tag to release yet"
+              exit 1
+            fi
+            git checkout -q "$current"
+            echo "tag=$current" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          next=$(svu next --v0)
+          if [ "$next" = "$current" ]; then
+            echo "No release needed (current: $current)"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag "$next"
+          git push origin "$next"
+          echo "tag=$next" >> "$GITHUB_OUTPUT"
+      - uses: goreleaser/goreleaser-action@v6
+        if: steps.tag.outputs.tag != ''
+        with:
+          version: "~> v2"
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
+      - name: Check the published signature against the release
+        if: steps.tag.outputs.tag != ''
+        run: |
+          gh release download "${{ steps.tag.outputs.tag }}" --pattern 'checksums.txt*' --dir signed
+          cosign verify-blob signed/checksums.txt \
+            --bundle signed/checksums.txt.sigstore.json \
+            --certificate-identity "https://github.com/${{ github.repository }}/.github/workflows/release.yml@refs/heads/main" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

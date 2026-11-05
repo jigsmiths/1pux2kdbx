@@ -1,3 +1,7 @@
 /1pux2kdbx
+/cmd/1pux2kdbx/1pux2kdbx
+/dist/
+/coverage.out
+/coverage.html
 *.kdbx
 *.1pux

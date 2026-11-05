@@ -1,0 +1,31 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: golangci/golangci-lint-action@v8
+        if: matrix.os == 'ubuntu-latest'
+        with:
+          version: v2.14.0
+      - uses: extractions/setup-just@v2
+      # keepassxc-cli lets the end-to-end merge test run instead of skipping
+      - if: matrix.os == 'ubuntu-latest'
+        run: sudo apt-get update && sudo apt-get install -y keepassxc
+      - if: matrix.os == 'macos-latest'
+        run: |
+          brew install --cask keepassxc
+          echo "KEEPASSXC_CLI=/Applications/KeePassXC.app/Contents/MacOS/keepassxc-cli" >> "$GITHUB_ENV"
+      - run: go test -race ./...

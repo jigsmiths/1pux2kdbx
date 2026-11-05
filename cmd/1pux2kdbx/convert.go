@@ -96,7 +96,7 @@ func convert(in, out, name, password string) (stats, error) {
 	if err != nil {
 		return stats{}, fmt.Errorf("open 1pux: %w", err)
 	}
-	defer zr.Close()
+	defer func() { _ = zr.Close() }()
 
 	c := &converter{zip: zr, db: kp.NewDatabase(kp.WithDatabaseKDBXVersion41())}
 	// gokeepasslib defaults to Argon2 with 1 MiB, far below KeePassXC. On first
@@ -136,8 +136,12 @@ func convert(in, out, name, password string) (stats, error) {
 	if err != nil {
 		return stats{}, err
 	}
-	defer f.Close()
 	if err := kp.NewEncoder(f).Encode(c.db); err != nil {
+		_ = f.Close()
+		return stats{}, fmt.Errorf("write kdbx: %w", err)
+	}
+	// A failed close on a written file can mean a truncated backup.
+	if err := f.Close(); err != nil {
 		return stats{}, fmt.Errorf("write kdbx: %w", err)
 	}
 	return c.stats, nil
@@ -309,7 +313,7 @@ func (c *converter) readFile(path string) ([]byte, error) {
 			if err != nil {
 				return nil, err
 			}
-			defer rc.Close()
+			defer func() { _ = rc.Close() }()
 			return io.ReadAll(rc)
 		}
 	}
