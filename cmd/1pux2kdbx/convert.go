@@ -211,7 +211,7 @@ func (c *converter) entry(vaultID string, it item) kp.Entry {
 		}
 	}
 	if d := it.Details.DocumentAttributes; d != nil {
-		c.attach(&e, d.FileName, "files/"+d.DocumentID+"__"+d.FileName)
+		c.attach(&e, *d)
 	}
 
 	e.Times = times(it.CreatedAt, it.UpdatedAt)
@@ -239,7 +239,7 @@ func (c *converter) field(e *kp.Entry, s section, f field) {
 		case "file":
 			var d document
 			if json.Unmarshal(raw, &d) == nil {
-				c.attach(e, d.FileName, "files/"+d.DocumentID+"__"+d.FileName)
+				c.attach(e, d)
 			}
 		case "sshKey":
 			var k sshKey
@@ -261,10 +261,17 @@ func (c *converter) field(e *kp.Entry, s section, f field) {
 				set(e, name, fmt.Sprintf("%s\n%s, %s %s\n%s",
 					a["street"], a["city"], a["state"], a["zip"], a["country"]), false)
 			}
-		case "date", "monthYear":
+		case "date":
 			if n, err := strconv.ParseInt(string(raw), 10, 64); err == nil && n > 0 {
 				set(e, name, unix(n).Time.Format("2006-01-02"), false)
 			}
+		case "monthYear":
+			// Stored as YYYYMM, not a timestamp.
+			v := str(raw)
+			if n, err := strconv.Atoi(v); err == nil && n >= 190001 && n%100 >= 1 && n%100 <= 12 {
+				v = fmt.Sprintf("%04d-%02d", n/100, n%100)
+			}
+			set(e, name, v, false)
 		default:
 			set(e, name, str(raw), kind == "concealed")
 		}
@@ -288,13 +295,25 @@ func (c *converter) totp(e *kp.Entry, secret string) {
 	set(e, key, secret, true)
 }
 
-func (c *converter) attach(e *kp.Entry, fileName, zipPath string) {
-	data, err := c.readFile(zipPath)
+func (c *converter) attach(e *kp.Entry, d document) {
+	// KeePassXC's importer reads "<id>__<name>" but the 1Password docs show
+	// three underscores, so fall back to any "<id>_...<name>" entry.
+	path := "files/" + d.DocumentID + "__" + d.FileName
+	data, err := c.readFile(path)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "warning: %s: missing attachment %s\n", e.GetTitle(), zipPath)
+		for _, f := range c.zip.File {
+			if strings.HasPrefix(f.Name, "files/"+d.DocumentID+"_") && strings.HasSuffix(f.Name, "_"+d.FileName) {
+				path = f.Name
+				data, err = c.readFile(path)
+				break
+			}
+		}
+	}
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "warning: %s: missing attachment %s\n", e.GetTitle(), path)
 		return
 	}
-	c.attachBytes(e, fileName, data)
+	c.attachBytes(e, d.FileName, data)
 }
 
 func (c *converter) attachBytes(e *kp.Entry, fileName string, data []byte) {
