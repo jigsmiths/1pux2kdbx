@@ -19,6 +19,7 @@ func main() {
 	in := flag.String("in", "", "path to the 1Password .1pux export")
 	out := flag.String("out", "", "path of the .kdbx file to write")
 	name := flag.String("name", "1Password Backup", "database name and root group name")
+	previous := flag.String("previous", "", "existing backup .kdbx (same password); entries whose items are gone from the export are tagged \""+deletedTag+"\"")
 	showVersion := flag.Bool("version", false, "print the version and exit")
 	flag.Parse()
 
@@ -37,12 +38,12 @@ func main() {
 		fail(err)
 	}
 
-	stats, err := convert(*in, *out, *name, password)
+	stats, err := convert(*in, *out, *name, password, *previous)
 	if err != nil {
 		fail(err)
 	}
-	fmt.Fprintf(os.Stderr, "wrote %s: %d groups, %d entries, %d attachments, %d skipped\n",
-		*out, stats.groups, stats.entries, stats.attachments, stats.skipped)
+	fmt.Fprintf(os.Stderr, "wrote %s: %d groups, %d entries, %d attachments, %d skipped, %d deleted\n",
+		*out, stats.groups, stats.entries, stats.attachments, stats.skipped, stats.deleted)
 }
 
 // readPassword takes the kdbx password from KDBX_PASSWORD, falling back to a

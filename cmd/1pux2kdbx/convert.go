@@ -2,12 +2,20 @@ package main
 
 import (
 	"archive/zip"
+	"crypto/ed25519"
 	"crypto/sha1"
+	"crypto/sha256"
+	"crypto/x509"
+	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
+	"encoding/pem"
+	"encoding/xml"
 	"fmt"
 	"io"
 	"net/url"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -51,11 +59,17 @@ type item struct {
 			Designation string `json:"designation"`
 			Value       string `json:"value"`
 		} `json:"loginFields"`
-		Password           string    `json:"password"`
-		NotesPlain         string    `json:"notesPlain"`
-		Sections           []section `json:"sections"`
-		DocumentAttributes *document `json:"documentAttributes"`
+		Password           string           `json:"password"`
+		NotesPlain         string           `json:"notesPlain"`
+		Sections           []section        `json:"sections"`
+		DocumentAttributes *document        `json:"documentAttributes"`
+		PasswordHistory    []passwordChange `json:"passwordHistory"`
 	} `json:"details"`
+}
+
+type passwordChange struct {
+	Value string `json:"value"`
+	Time  int64  `json:"time"`
 }
 
 type section struct {
@@ -76,12 +90,16 @@ type document struct {
 	DocumentID string `json:"documentId"`
 }
 
+// Metadata values are not all strings: RSA keys give keyType as {"rsa": "Rsa3072"}.
 type sshKey struct {
-	PrivateKey string            `json:"privateKey"`
-	Metadata   map[string]string `json:"metadata"`
+	PrivateKey string                     `json:"privateKey"`
+	Metadata   map[string]json.RawMessage `json:"metadata"`
 }
 
-type stats struct{ groups, entries, attachments, skipped int }
+type stats struct{ groups, entries, attachments, skipped, deleted int }
+
+// deletedTag marks backup entries whose 1Password item is gone from the export.
+const deletedTag = "Deleted in 1Password"
 
 // converter carries the open zip and the database being built so the
 // per-item helpers stay small.
@@ -89,9 +107,44 @@ type converter struct {
 	zip   *zip.ReadCloser
 	db    *kp.Database
 	stats stats
+	items itemIndex
+
+	// Set only when converting against an existing backup.
+	prev       *kp.Database
+	prevTagged map[kp.UUID]bool
+	exported   int64 // export.attributes createdAt
 }
 
-func convert(in, out, name, password string) (stats, error) {
+// itemIndex maps every converted item to its entry UUID. It is built before
+// any entry so references can point at entries not yet created.
+type itemIndex map[string]kp.UUID
+
+func newItemIndex(ex export) itemIndex {
+	idx := itemIndex{}
+	for _, acc := range ex.Accounts {
+		for _, v := range acc.Vaults {
+			for _, it := range v.Items {
+				if it.State != "trashed" {
+					// Item UUIDs are only unique within a vault, so scope them by vault.
+					idx[v.Attrs.UUID+":"+it.UUID] = stableUUID(v.Attrs.UUID + ":" + it.UUID)
+				}
+			}
+		}
+	}
+	return idx
+}
+
+// entryUUID reports the entry UUID for an item, and false if the item is not
+// converted (trashed, or not in the export).
+func (idx itemIndex) entryUUID(vault, item string) (kp.UUID, bool) {
+	u, ok := idx[vault+":"+item]
+	return u, ok
+}
+
+// convert writes the export at in to a new kdbx at out. With previous set to
+// the existing backup, entries whose items are gone from the export are
+// carried over tagged deletedTag, so the merge marks them.
+func convert(in, out, name, password, previous string) (stats, error) {
 	zr, err := zip.OpenReader(in)
 	if err != nil {
 		return stats{}, fmt.Errorf("open 1pux: %w", err)
@@ -115,14 +168,34 @@ func convert(in, out, name, password string) (stats, error) {
 		return stats{}, fmt.Errorf("parse export.data: %w", err)
 	}
 
+	c.items = newItemIndex(ex)
+	if previous != "" {
+		if err := c.loadPrevious(previous, password); err != nil {
+			return stats{}, err
+		}
+	}
+
 	root := kp.NewGroup()
 	root.Name = name
 	root.UUID = stableUUID("root")
-	root.Times = times(0, 0)
+	var created, updated int64
 	for _, acc := range ex.Accounts {
 		for _, v := range acc.Vaults {
-			root.Groups = append(root.Groups, c.group(v))
+			g := c.group(v)
+			root.Groups = append(root.Groups, g)
+			if len(g.Entries) == 0 {
+				continue
+			}
+			if gc := g.Times.CreationTime.Time.Unix(); created == 0 || gc < created {
+				created = gc
+			}
+			updated = max(updated, g.Times.LastModificationTime.Time.Unix())
 		}
+	}
+	// KeePassXC shows this as the database creation date.
+	root.Times = times(created, updated)
+	if err := c.tagDeleted(&root); err != nil {
+		return stats{}, err
 	}
 
 	c.db.Credentials = kp.NewPasswordCredentials(password)
@@ -154,11 +227,17 @@ func (c *converter) group(v vault) kp.Group {
 	c.stats.groups++
 	var created, updated int64
 	for _, it := range v.Items {
-		if it.State == "trashed" {
+		u, ok := c.items.entryUUID(v.Attrs.UUID, it.UUID)
+		if !ok {
 			c.stats.skipped++
 			continue
 		}
-		g.Entries = append(g.Entries, c.entry(v.Attrs.UUID, it))
+		e := c.entry(u, it)
+		if c.prevTagged[u] && e.Times.LastModificationTime.Time.Unix() < c.exported {
+			// Restored in 1Password: be newer than the tagged copy so the merge drops the tag.
+			e.Times.LastModificationTime, e.Times.LastAccessTime = unix(c.exported), unix(c.exported)
+		}
+		g.Entries = append(g.Entries, e)
 		c.stats.entries++
 		if created == 0 || it.CreatedAt < created {
 			created = it.CreatedAt
@@ -169,10 +248,9 @@ func (c *converter) group(v vault) kp.Group {
 	return g
 }
 
-func (c *converter) entry(vaultID string, it item) kp.Entry {
+func (c *converter) entry(u kp.UUID, it item) kp.Entry {
 	e := kp.NewEntry()
-	// Item UUIDs are only unique within a vault, so scope them by vault.
-	e.UUID = stableUUID(vaultID + ":" + it.UUID)
+	e.UUID = u
 
 	set(&e, "Title", it.Overview.Title, false)
 	set(&e, "URL", it.Overview.URL, false)
@@ -211,11 +289,40 @@ func (c *converter) entry(vaultID string, it item) kp.Entry {
 		}
 	}
 	if d := it.Details.DocumentAttributes; d != nil {
-		c.attach(&e, d.FileName, "files/"+d.DocumentID+"__"+d.FileName)
+		c.attach(&e, *d)
 	}
 
 	e.Times = times(it.CreatedAt, it.UpdatedAt)
+	e.Histories = history(e, it)
 	return e
+}
+
+// history turns 1Password's password history into KeePass history snapshots,
+// oldest first. 1Password keeps only old passwords, so each snapshot is the
+// current entry with that password swapped in.
+func history(e kp.Entry, it item) []kp.History {
+	changes := append([]passwordChange(nil), it.Details.PasswordHistory...)
+	sort.SliceStable(changes, func(i, j int) bool { return changes[i].Time < changes[j].Time })
+	var snaps []kp.Entry
+	for _, ch := range changes {
+		if ch.Value == "" {
+			continue
+		}
+		s := e
+		s.Values = nil
+		for _, v := range e.Values {
+			if v.Key != "Password" {
+				s.Values = append(s.Values, v)
+			}
+		}
+		set(&s, "Password", ch.Value, true)
+		s.Times = times(it.CreatedAt, ch.Time)
+		snaps = append(snaps, s)
+	}
+	if len(snaps) == 0 {
+		return nil
+	}
+	return []kp.History{{Entries: snaps}}
 }
 
 // field maps one 1Password section field onto the entry. The attribute name is
@@ -239,14 +346,12 @@ func (c *converter) field(e *kp.Entry, s section, f field) {
 		case "file":
 			var d document
 			if json.Unmarshal(raw, &d) == nil {
-				c.attach(e, d.FileName, "files/"+d.DocumentID+"__"+d.FileName)
+				c.attach(e, d)
 			}
 		case "sshKey":
 			var k sshKey
 			if json.Unmarshal(raw, &k) == nil {
-				c.attachBytes(e, "id_"+k.Metadata["keyType"], []byte(k.PrivateKey))
-				set(e, "SSH Public Key", k.Metadata["publicKey"], false)
-				set(e, "SSH Fingerprint", k.Metadata["fingerprint"], false)
+				c.sshKey(e, k)
 			}
 		case "email":
 			var m struct {
@@ -257,16 +362,43 @@ func (c *converter) field(e *kp.Entry, s section, f field) {
 			}
 		case "address":
 			var a map[string]string
-			if json.Unmarshal(raw, &a) == nil {
+			if json.Unmarshal(raw, &a) == nil && strings.Join([]string{a["street"], a["city"], a["state"], a["zip"], a["country"]}, "") != "" {
 				set(e, name, fmt.Sprintf("%s\n%s, %s %s\n%s",
 					a["street"], a["city"], a["state"], a["zip"], a["country"]), false)
 			}
-		case "date", "monthYear":
+		case "ssoLogin":
+			var m struct {
+				Provider string          `json:"provider"`
+				Item     json.RawMessage `json:"item"`
+			}
+			if json.Unmarshal(raw, &m) == nil {
+				set(e, name, m.Provider, false)
+				// Decoded separately so an unexpected link shape keeps the provider.
+				var ref struct {
+					Vault string `json:"vaultUuid"`
+					Item  string `json:"itemUuid"`
+				}
+				// A KeePass field reference, which KeePassXC resolves to the
+				// username of the linked login.
+				if json.Unmarshal(m.Item, &ref) == nil {
+					if u, ok := c.items.entryUUID(ref.Vault, ref.Item); ok {
+						set(e, name+" account", "{REF:U@I:"+strings.ToUpper(hex.EncodeToString(u[:]))+"}", false)
+					}
+				}
+			}
+		case "date":
 			if n, err := strconv.ParseInt(string(raw), 10, 64); err == nil && n > 0 {
 				set(e, name, unix(n).Time.Format("2006-01-02"), false)
 			}
+		case "monthYear":
+			// Stored as YYYYMM, not a timestamp.
+			v := str(raw)
+			if n, err := strconv.Atoi(v); err == nil && n >= 190001 && n%100 >= 1 && n%100 <= 12 {
+				v = fmt.Sprintf("%04d-%02d", n/100, n%100)
+			}
+			set(e, name, v, false)
 		default:
-			set(e, name, str(raw), kind == "concealed")
+			set(e, name, str(raw), kind == "concealed" || kind == "creditCardNumber")
 		}
 	}
 }
@@ -288,13 +420,126 @@ func (c *converter) totp(e *kp.Entry, secret string) {
 	set(e, key, secret, true)
 }
 
-func (c *converter) attach(e *kp.Entry, fileName, zipPath string) {
-	data, err := c.readFile(zipPath)
+func (c *converter) sshKey(e *kp.Entry, k sshKey) {
+	keyType := str(k.Metadata["keyType"])
+	if keyType == "" {
+		var obj map[string]json.RawMessage
+		if json.Unmarshal(k.Metadata["keyType"], &obj) == nil {
+			for t := range obj {
+				if keyType == "" || t < keyType {
+					keyType = t
+				}
+			}
+		}
+	}
+	name := "id_" + keyType
+	// OpenSSH cannot load the PKCS#8 form 1Password uses for ed25519, so store
+	// it converted, plus the original bytes untouched.
+	if converted, ok := openSSHEd25519(k.PrivateKey); ok {
+		c.attachBytes(e, name, converted)
+		c.attachBytes(e, name+".pkcs8", []byte(k.PrivateKey))
+	} else {
+		c.attachBytes(e, name, []byte(k.PrivateKey))
+	}
+	if k.PrivateKey != "" {
+		c.keeAgent(e, name)
+	}
+	set(e, "SSH Public Key", str(k.Metadata["publicKey"]), false)
+	set(e, "SSH Fingerprint", str(k.Metadata["fingerprint"]), false)
+}
+
+// keeAgent enables KeePassXC's SSH agent for the key attachment: added when
+// the database opens, removed when it closes. KeePassXC supports one key per
+// entry, so only the first key gets settings. Not counted in stats, which
+// track data from the export.
+func (c *converter) keeAgent(e *kp.Entry, attachment string) {
+	const settings = "KeeAgent.settings"
+	for _, ref := range e.Binaries {
+		if ref.Name == settings {
+			return
+		}
+	}
+	var name strings.Builder
+	_ = xml.EscapeText(&name, []byte(attachment))
+	// Same layout as KeePassXC's KeeAgentSettings::toXml.
+	doc := `<?xml version="1.0" encoding="UTF-8"?>
+<EntrySettings xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <AllowUseOfSshKey>true</AllowUseOfSshKey>
+  <AddAtDatabaseOpen>true</AddAtDatabaseOpen>
+  <RemoveAtDatabaseClose>true</RemoveAtDatabaseClose>
+  <UseConfirmConstraintWhenAdding>false</UseConfirmConstraintWhenAdding>
+  <UseLifetimeConstraintWhenAdding>false</UseLifetimeConstraintWhenAdding>
+  <LifetimeConstraintDuration>600</LifetimeConstraintDuration>
+  <Location>
+    <SelectedType>attachment</SelectedType>
+    <AttachmentName>` + name.String() + `</AttachmentName>
+    <SaveAttachmentToTempFile>false</SaveAttachmentToTempFile>
+    <FileName/>
+  </Location>
+</EntrySettings>
+`
+	bin := c.db.AddBinary([]byte(doc))
+	e.Binaries = append(e.Binaries, bin.CreateReference(settings))
+}
+
+// openSSHEd25519 re-encodes a PKCS#8 ed25519 key in OpenSSH's own format
+// (PROTOCOL.key). The key material is unchanged. The check bytes, random in
+// ssh-keygen, are derived from the key so the output is stable across runs.
+func openSSHEd25519(pemKey string) ([]byte, bool) {
+	block, _ := pem.Decode([]byte(pemKey))
+	if block == nil || block.Type != "PRIVATE KEY" {
+		return nil, false
+	}
+	parsed, err := x509.ParsePKCS8PrivateKey(block.Bytes)
+	priv, ok := parsed.(ed25519.PrivateKey)
+	if err != nil || !ok {
+		return nil, false
+	}
+	pubBlob := append(sshString([]byte("ssh-ed25519")), sshString(priv.Public().(ed25519.PublicKey))...)
+
+	check := sha256.Sum256(priv.Seed())
+	section := append(append([]byte{}, check[:4]...), check[:4]...)
+	section = append(section, pubBlob...)
+	section = append(section, sshString(priv)...)
+	section = append(section, sshString(nil)...) // comment
+	for pad := byte(1); len(section)%8 != 0; pad++ {
+		section = append(section, pad)
+	}
+
+	out := []byte("openssh-key-v1\x00")
+	out = append(out, sshString([]byte("none"))...) // cipher
+	out = append(out, sshString([]byte("none"))...) // kdf
+	out = append(out, sshString(nil)...)            // kdf options
+	out = binary.BigEndian.AppendUint32(out, 1)     // number of keys
+	out = append(out, sshString(pubBlob)...)
+	out = append(out, sshString(section)...)
+	return pem.EncodeToMemory(&pem.Block{Type: "OPENSSH PRIVATE KEY", Bytes: out}), true
+}
+
+// sshString is the SSH wire encoding of a length-prefixed string.
+func sshString(b []byte) []byte {
+	return append(binary.BigEndian.AppendUint32(nil, uint32(len(b))), b...)
+}
+
+func (c *converter) attach(e *kp.Entry, d document) {
+	// KeePassXC's importer reads "<id>__<name>" but the 1Password docs show
+	// three underscores, so fall back to any "<id>_...<name>" entry.
+	path := "files/" + d.DocumentID + "__" + d.FileName
+	data, err := c.readFile(path)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "warning: %s: missing attachment %s\n", e.GetTitle(), zipPath)
+		for _, f := range c.zip.File {
+			if strings.HasPrefix(f.Name, "files/"+d.DocumentID+"_") && strings.HasSuffix(f.Name, "_"+d.FileName) {
+				path = f.Name
+				data, err = c.readFile(path)
+				break
+			}
+		}
+	}
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "warning: %s: missing attachment %s\n", e.GetTitle(), path)
 		return
 	}
-	c.attachBytes(e, fileName, data)
+	c.attachBytes(e, d.FileName, data)
 }
 
 func (c *converter) attachBytes(e *kp.Entry, fileName string, data []byte) {
@@ -304,6 +549,175 @@ func (c *converter) attachBytes(e *kp.Entry, fileName string, data []byte) {
 	bin := c.db.AddBinary(data)
 	e.Binaries = append(e.Binaries, bin.CreateReference(fileName))
 	c.stats.attachments++
+}
+
+// loadPrevious reads the existing backup, so items missing from this export
+// can be tagged instead of lingering unnoticed after the merge.
+func (c *converter) loadPrevious(path, password string) error {
+	raw, err := c.readFile("export.attributes")
+	if err != nil {
+		return fmt.Errorf("tagging deleted items needs export.attributes: %w", err)
+	}
+	var attrs struct {
+		CreatedAt int64 `json:"createdAt"`
+	}
+	if json.Unmarshal(raw, &attrs) != nil || attrs.CreatedAt == 0 {
+		return fmt.Errorf("tagging deleted items needs createdAt in export.attributes")
+	}
+
+	f, err := os.Open(path)
+	if err != nil {
+		return fmt.Errorf("open previous: %w", err)
+	}
+	defer func() { _ = f.Close() }()
+	db := kp.NewDatabase()
+	db.Credentials = kp.NewPasswordCredentials(password)
+	if err := kp.NewDecoder(f).Decode(db); err != nil {
+		return fmt.Errorf("open previous %s: %w", path, err)
+	}
+	if err := db.UnlockProtectedEntries(); err != nil {
+		return fmt.Errorf("open previous %s: %w", path, err)
+	}
+
+	c.prev, c.exported, c.prevTagged = db, attrs.CreatedAt, map[kp.UUID]bool{}
+	c.eachPrevious(func(_ *kp.Group, e *kp.Entry) {
+		if hasTag(e.Tags, deletedTag) {
+			c.prevTagged[e.UUID] = true
+		}
+	})
+	return nil
+}
+
+// eachPrevious visits every backup entry outside the recycle bin.
+func (c *converter) eachPrevious(fn func(parent *kp.Group, e *kp.Entry)) {
+	bin := c.prev.Content.Meta.RecycleBinUUID
+	var walk func(g *kp.Group)
+	walk = func(g *kp.Group) {
+		if g.UUID == bin {
+			return
+		}
+		for i := range g.Entries {
+			fn(g, &g.Entries[i])
+		}
+		for i := range g.Groups {
+			walk(&g.Groups[i])
+		}
+	}
+	for i := range c.prev.Content.Root.Groups {
+		walk(&c.prev.Content.Root.Groups[i])
+	}
+}
+
+// tagDeleted copies backup entries whose items are gone from this export into
+// the new database, tagged and dated at the export, so the merge tags them in
+// place. Only our own entries count: stableUUID makes version 5 UUIDs, while
+// entries created in KeePassXC get random version 4 ones.
+func (c *converter) tagDeleted(root *kp.Group) error {
+	if c.prev == nil {
+		return nil
+	}
+	current := map[kp.UUID]bool{}
+	for _, u := range c.items {
+		current[u] = true
+	}
+	var err error
+	c.eachPrevious(func(parent *kp.Group, e *kp.Entry) {
+		if err != nil || e.UUID[6]>>4 != 5 || current[e.UUID] {
+			return
+		}
+		if !hasTag(e.Tags, deletedTag) {
+			// Edited after the export was taken, so the export says nothing about it.
+			if e.Times.LastModificationTime != nil && e.Times.LastModificationTime.Time.Unix() >= c.exported {
+				return
+			}
+		}
+		var cp kp.Entry
+		if cp, err = c.copyEntry(*e); err != nil {
+			return
+		}
+		if !hasTag(e.Tags, deletedTag) {
+			cp.Tags = addTag(e.Tags, deletedTag)
+			cp.Times.LastModificationTime, cp.Times.LastAccessTime = unix(c.exported), unix(c.exported)
+		}
+		place(root, *parent, cp)
+		c.stats.deleted++
+	})
+	return err
+}
+
+// copyEntry clones a backup entry, re-adding its attachments, which live in
+// the backup's own binary pool. A missing attachment is an error: the merge
+// would otherwise drop it from the backup.
+func (c *converter) copyEntry(e kp.Entry) (kp.Entry, error) {
+	var err error
+	e.Values = append([]kp.ValueData(nil), e.Values...)
+	title := e.GetTitle()
+	if e.Binaries, err = c.copyBinaries(title, e.Binaries); err != nil {
+		return e, err
+	}
+	hs := make([]kp.History, len(e.Histories))
+	for i, h := range e.Histories {
+		for _, s := range h.Entries {
+			s.Values = append([]kp.ValueData(nil), s.Values...)
+			if s.Binaries, err = c.copyBinaries(title, s.Binaries); err != nil {
+				return e, err
+			}
+			hs[i].Entries = append(hs[i].Entries, s)
+		}
+	}
+	e.Histories = hs
+	return e, nil
+}
+
+func (c *converter) copyBinaries(title string, refs []kp.BinaryReference) ([]kp.BinaryReference, error) {
+	var out []kp.BinaryReference
+	for _, ref := range refs {
+		b := c.prev.FindBinary(ref.Value.ID)
+		if b == nil {
+			return nil, fmt.Errorf("previous: %s: attachment %s not found", title, ref.Name)
+		}
+		data, err := b.GetContentBytes()
+		if err != nil {
+			return nil, fmt.Errorf("previous: %s: attachment %s: %w", title, ref.Name, err)
+		}
+		out = append(out, c.db.AddBinary(data).CreateReference(ref.Name))
+	}
+	return out, nil
+}
+
+// place puts a carried-over entry in the group it has in the backup (same
+// UUID and times), so the merge leaves it where the user put it.
+func place(root *kp.Group, parent kp.Group, e kp.Entry) {
+	if parent.UUID == root.UUID {
+		root.Entries = append(root.Entries, e)
+		return
+	}
+	for i := range root.Groups {
+		if root.Groups[i].UUID == parent.UUID {
+			root.Groups[i].Entries = append(root.Groups[i].Entries, e)
+			return
+		}
+	}
+	parent.Entries, parent.Groups = []kp.Entry{e}, nil
+	root.Groups = append(root.Groups, parent)
+}
+
+// hasTag reports whether tags, separated by ',' or ';' as KeePassXC allows,
+// include tag.
+func hasTag(tags, tag string) bool {
+	for _, t := range strings.FieldsFunc(tags, func(r rune) bool { return r == ',' || r == ';' }) {
+		if strings.TrimSpace(t) == tag {
+			return true
+		}
+	}
+	return false
+}
+
+func addTag(tags, tag string) string {
+	if tags == "" {
+		return tag
+	}
+	return tags + "," + tag
 }
 
 func (c *converter) readFile(path string) ([]byte, error) {
@@ -328,6 +742,12 @@ func set(e *kp.Entry, key, value string, protected bool) {
 	v := kp.V{Content: value}
 	if protected {
 		v.Protected = w.NewBoolWrapper(true)
+	}
+	// KeePassXC rejects a database with repeated keys, and 1Password allows
+	// several fields with the same title, so suffix later ones.
+	base := key
+	for i := 2; e.Get(key) != nil; i++ {
+		key = fmt.Sprintf("%s_%d", base, i)
 	}
 	e.Values = append(e.Values, kp.ValueData{Key: key, Value: v})
 }

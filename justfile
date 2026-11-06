@@ -66,13 +66,14 @@ sync export backup: build
     fi
 
     fresh="$tmp/fresh.kdbx"
-    {{BINARY_PATH}} -in "{{export}}" -out "$fresh"
-
     if [[ ! -f "{{backup}}" ]]; then
+      {{BINARY_PATH}} -in "{{export}}" -out "$fresh"
       mv "$fresh" "{{backup}}"
       echo "created {{backup}}"
       exit 0
     fi
+    # -previous tags entries whose items are gone from this export.
+    {{BINARY_PATH}} -in "{{export}}" -out "$fresh" -previous "{{backup}}"
 
     cp "{{backup}}" "{{backup}}.bak"
     # No -q here: it also hides the list of changes we want to review.

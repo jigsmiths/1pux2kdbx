@@ -1,0 +1,295 @@
+{
+  "name": "Backup",
+  "groups": {
+    "Personal": {
+      "uuid": "c6c06a48a57e5f6d83bbfa04692d264a",
+      "entries": {
+        "Acme Portal": {
+          "uuid": "d97e1ff8a37050aba9c0562db2a59946",
+          "created": 1600000000,
+          "modified": 1600000500,
+          "values": [
+            {
+              "key": "Title",
+              "value": "Acme Portal"
+            },
+            {
+              "key": "URL",
+              "value": "https://acme.example/login"
+            },
+            {
+              "key": "UserName",
+              "value": "wendy"
+            },
+            {
+              "key": "Password",
+              "value": "acme-pass",
+              "protected": true
+            },
+            {
+              "key": "otp",
+              "value": "otpauth://totp/Acme%20Portal:wendy?secret=JBSWY3DPEHPK3PXP",
+              "protected": true
+            },
+            {
+              "key": "otp_1",
+              "value": "otpauth://totp/Acme:wendy?secret=ABCDEFGH\u0026issuer=Acme",
+              "protected": true
+            }
+          ]
+        },
+        "Build server key": {
+          "uuid": "0a61d9e014ab5f02a4c10abb78ea91b5",
+          "created": 1580000000,
+          "modified": 1580000400,
+          "values": [
+            {
+              "key": "Title",
+              "value": "Build server key"
+            },
+            {
+              "key": "SSH Public Key",
+              "value": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGolden"
+            },
+            {
+              "key": "SSH Fingerprint",
+              "value": "SHA256:goldenfingerprint"
+            }
+          ],
+          "binaries": [
+            {
+              "name": "id_ed25519",
+              "size": 83,
+              "sha256": "6876588393f74ddc"
+            },
+            {
+              "name": "KeeAgent.settings",
+              "size": 724,
+              "sha256": "6c1611ef3d54d912"
+            }
+          ]
+        },
+        "Dropbox": {
+          "uuid": "754a62fc2324547c8f15a0ca027582e6",
+          "tags": "cloud,storage,Favorite",
+          "created": 1614298956,
+          "modified": 1635346445,
+          "values": [
+            {
+              "key": "Title",
+              "value": "Dropbox"
+            },
+            {
+              "key": "URL",
+              "value": "https://www.dropbox.com/"
+            },
+            {
+              "key": "Notes",
+              "value": "This is a note. *bold*! _italic_!"
+            },
+            {
+              "key": "UserName",
+              "value": "wendy@example.com"
+            },
+            {
+              "key": "Password",
+              "value": "most-secure-password-ever!",
+              "protected": true
+            },
+            {
+              "key": "KP2A_URL_1",
+              "value": "https://m.dropbox.com/"
+            },
+            {
+              "key": "Security_PIN",
+              "value": "12345",
+              "protected": true
+            },
+            {
+              "key": "sign in with",
+              "value": "google"
+            },
+            {
+              "key": "sign in with account",
+              "value": "{REF:U@I:D97E1FF8A37050ABA9C0562DB2A59946}"
+            },
+            {
+              "key": "Recovery email",
+              "value": "recovery@example.com"
+            }
+          ],
+          "history": [
+            "1458322355 12345password"
+          ]
+        },
+        "Holiday video": {
+          "uuid": "1316df6933495dd19cc363038c0ba652",
+          "created": 1595000000,
+          "modified": 1595000002,
+          "values": [
+            {
+              "key": "Title",
+              "value": "Holiday video"
+            },
+            {
+              "key": "Notes",
+              "value": "see attached"
+            }
+          ],
+          "binaries": [
+            {
+              "name": "My movie.mp4",
+              "size": 64,
+              "sha256": "bf3c74c542f87801"
+            }
+          ]
+        },
+        "Old forum": {
+          "uuid": "adb83ab1e07e5ff5bdda14f5716e2e6d",
+          "tags": "Archived",
+          "created": 1400000000,
+          "modified": 1400000001,
+          "values": [
+            {
+              "key": "Title",
+              "value": "Old forum"
+            },
+            {
+              "key": "URL",
+              "value": "https://forum.example"
+            },
+            {
+              "key": "UserName",
+              "value": "old"
+            },
+            {
+              "key": "Password",
+              "value": "legacy-password",
+              "protected": true
+            }
+          ]
+        },
+        "Passport": {
+          "uuid": "3e6557858bff5d2da92f7233e30a638d",
+          "created": 1590000000,
+          "modified": 1590000001,
+          "values": [
+            {
+              "key": "Title",
+              "value": "Passport"
+            },
+            {
+              "key": "Notes",
+              "value": "scan of passport"
+            }
+          ],
+          "binaries": [
+            {
+              "name": "Passport Photo.png",
+              "size": 49,
+              "sha256": "688777f7123c97df"
+            }
+          ]
+        },
+        "Visa": {
+          "uuid": "4456cdf434dd5d3bb3fe3f875fe4b6c0",
+          "tags": "finance",
+          "created": 1550000000,
+          "modified": 1550000900,
+          "values": [
+            {
+              "key": "Title",
+              "value": "Visa"
+            },
+            {
+              "key": "type",
+              "value": "visa"
+            },
+            {
+              "key": "number",
+              "value": "4111111111111111",
+              "protected": true
+            },
+            {
+              "key": "verification number",
+              "value": "123",
+              "protected": true
+            },
+            {
+              "key": "expiry date",
+              "value": "2028-11"
+            },
+            {
+              "key": "cardholder name",
+              "value": "Wendy Appleseed"
+            }
+          ]
+        },
+        "Wendy Identity": {
+          "uuid": "fb86c337712b598198b335ab893459a0",
+          "created": 1500000000,
+          "modified": 1500000100,
+          "values": [
+            {
+              "key": "Title",
+              "value": "Wendy Identity"
+            },
+            {
+              "key": "Identification_first name",
+              "value": "Wendy"
+            },
+            {
+              "key": "Identification_gender",
+              "value": "female"
+            },
+            {
+              "key": "Identification_birth date",
+              "value": "1990-01-01"
+            },
+            {
+              "key": "Address_address",
+              "value": "1 Infinite Loop\nCupertino, CA 95014\nus"
+            },
+            {
+              "key": "Address_default phone",
+              "value": "555-0100"
+            },
+            {
+              "key": "Address_email",
+              "value": "wendy@example.com"
+            }
+          ]
+        }
+      }
+    },
+    "Work": {
+      "uuid": "4c3971d6ead55a558ebf36b9d35da41e",
+      "entries": {
+        "Work Dropbox": {
+          "uuid": "89d4d8a2cc015fe6a7c8a18cad3ad6cf",
+          "created": 1620000000,
+          "modified": 1620000100,
+          "values": [
+            {
+              "key": "Title",
+              "value": "Work Dropbox"
+            },
+            {
+              "key": "URL",
+              "value": "https://work.dropbox.example/"
+            },
+            {
+              "key": "UserName",
+              "value": "wendy@work.example"
+            },
+            {
+              "key": "Password",
+              "value": "work-pass",
+              "protected": true
+            }
+          ]
+        }
+      }
+    }
+  }
+}
