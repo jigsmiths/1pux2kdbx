@@ -235,7 +235,7 @@ func TestRealExport(t *testing.T) {
 	orig := os.Stderr
 	os.Stderr = w
 	out := filepath.Join(t.TempDir(), "real.kdbx")
-	s, err := convert(in, out, "Backup", testPassword)
+	s, err := convert(in, out, "Backup", testPassword, "")
 	os.Stderr = orig
 	_ = w.Close()
 	warnings, _ := io.ReadAll(r)

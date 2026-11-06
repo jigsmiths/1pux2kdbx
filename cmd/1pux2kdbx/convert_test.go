@@ -47,6 +47,12 @@ func vaultOf(id, name string, items ...map[string]any) map[string]any {
 // write1pux builds a .1pux zip from vaults plus extra files under files/.
 func write1pux(t *testing.T, path string, files map[string]string, vaults ...map[string]any) {
 	t.Helper()
+	write1puxAt(t, path, 1750000000, files, vaults...)
+}
+
+// write1puxAt is write1pux for an export taken at the given Unix time.
+func write1puxAt(t *testing.T, path string, exported int64, files map[string]string, vaults ...map[string]any) {
+	t.Helper()
 	data, err := json.Marshal(map[string]any{"accounts": []any{map[string]any{"vaults": vaults}}})
 	if err != nil {
 		t.Fatal(err)
@@ -67,6 +73,7 @@ func write1pux(t *testing.T, path string, files map[string]string, vaults ...map
 		}
 	}
 	add("export.data", string(data))
+	add("export.attributes", fmt.Sprintf(`{"version":3,"description":"1Password Unencrypted Export","createdAt":%d}`, exported))
 	for name, body := range files {
 		add("files/"+name, body)
 	}
@@ -77,7 +84,13 @@ func write1pux(t *testing.T, path string, files map[string]string, vaults ...map
 
 func convertT(t *testing.T, in, out string) stats {
 	t.Helper()
-	s, err := convert(in, out, "Backup", testPassword)
+	return convertPrev(t, in, out, "")
+}
+
+// convertPrev converts with an existing backup to tag deleted items against.
+func convertPrev(t *testing.T, in, out, previous string) stats {
+	t.Helper()
+	s, err := convert(in, out, "Backup", testPassword, previous)
 	if err != nil {
 		t.Fatalf("convert %s: %v", in, err)
 	}

@@ -205,19 +205,25 @@ func TestConvertErrors(t *testing.T) {
 	zipWith(t, badJSON, map[string]string{"export.data": "{not json"})
 	good := filepath.Join(dir, "good.1pux")
 	baseExport(t, good, "p", 1700000000)
+	noTime := filepath.Join(dir, "notime.1pux")
+	zipWith(t, noTime, map[string]string{"export.data": `{"accounts":[]}`})
+	backup := filepath.Join(dir, "backup.kdbx")
+	convertT(t, good, backup)
 
 	cases := []struct {
-		name, in, out, want string
+		name, in, out, previous, want string
 	}{
-		{"missing input", filepath.Join(dir, "missing"), filepath.Join(dir, "o1.kdbx"), "open 1pux"},
-		{"not a zip", notZip, filepath.Join(dir, "o2.kdbx"), "open 1pux"},
-		{"no export.data", noData, filepath.Join(dir, "o3.kdbx"), "not a 1pux file"},
-		{"bad json", badJSON, filepath.Join(dir, "o4.kdbx"), "parse export.data"},
-		{"unwritable output", good, filepath.Join(dir, "no-such-dir", "o5.kdbx"), "no-such-dir"},
+		{"missing input", filepath.Join(dir, "missing"), filepath.Join(dir, "o1.kdbx"), "", "open 1pux"},
+		{"not a zip", notZip, filepath.Join(dir, "o2.kdbx"), "", "open 1pux"},
+		{"no export.data", noData, filepath.Join(dir, "o3.kdbx"), "", "not a 1pux file"},
+		{"bad json", badJSON, filepath.Join(dir, "o4.kdbx"), "", "parse export.data"},
+		{"unwritable output", good, filepath.Join(dir, "no-such-dir", "o5.kdbx"), "", "no-such-dir"},
+		{"missing previous", good, filepath.Join(dir, "o6.kdbx"), filepath.Join(dir, "missing.kdbx"), "open previous"},
+		{"previous without export time", noTime, filepath.Join(dir, "o7.kdbx"), backup, "export.attributes"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			_, err := convert(c.in, c.out, "Backup", testPassword)
+			_, err := convert(c.in, c.out, "Backup", testPassword, c.previous)
 			if err == nil || !strings.Contains(err.Error(), c.want) {
 				t.Fatalf("err = %v, want it to contain %q", err, c.want)
 			}

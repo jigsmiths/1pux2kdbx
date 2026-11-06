@@ -96,7 +96,10 @@ type sshKey struct {
 	Metadata   map[string]json.RawMessage `json:"metadata"`
 }
 
-type stats struct{ groups, entries, attachments, skipped int }
+type stats struct{ groups, entries, attachments, skipped, deleted int }
+
+// deletedTag marks backup entries whose 1Password item is gone from the export.
+const deletedTag = "Deleted in 1Password"
 
 // converter carries the open zip and the database being built so the
 // per-item helpers stay small.
@@ -105,6 +108,11 @@ type converter struct {
 	db    *kp.Database
 	stats stats
 	items itemIndex
+
+	// Set only when converting against an existing backup.
+	prev       *kp.Database
+	prevTagged map[kp.UUID]bool
+	exported   int64 // export.attributes createdAt
 }
 
 // itemIndex maps every converted item to its entry UUID. It is built before
@@ -133,7 +141,10 @@ func (idx itemIndex) entryUUID(vault, item string) (kp.UUID, bool) {
 	return u, ok
 }
 
-func convert(in, out, name, password string) (stats, error) {
+// convert writes the export at in to a new kdbx at out. With previous set to
+// the existing backup, entries whose items are gone from the export are
+// carried over tagged deletedTag, so the merge marks them.
+func convert(in, out, name, password, previous string) (stats, error) {
 	zr, err := zip.OpenReader(in)
 	if err != nil {
 		return stats{}, fmt.Errorf("open 1pux: %w", err)
@@ -158,6 +169,11 @@ func convert(in, out, name, password string) (stats, error) {
 	}
 
 	c.items = newItemIndex(ex)
+	if previous != "" {
+		if err := c.loadPrevious(previous, password); err != nil {
+			return stats{}, err
+		}
+	}
 
 	root := kp.NewGroup()
 	root.Name = name
@@ -178,6 +194,9 @@ func convert(in, out, name, password string) (stats, error) {
 	}
 	// KeePassXC shows this as the database creation date.
 	root.Times = times(created, updated)
+	if err := c.tagDeleted(&root); err != nil {
+		return stats{}, err
+	}
 
 	c.db.Credentials = kp.NewPasswordCredentials(password)
 	c.db.Content.Meta.DatabaseName = name
@@ -213,7 +232,12 @@ func (c *converter) group(v vault) kp.Group {
 			c.stats.skipped++
 			continue
 		}
-		g.Entries = append(g.Entries, c.entry(u, it))
+		e := c.entry(u, it)
+		if c.prevTagged[u] && e.Times.LastModificationTime.Time.Unix() < c.exported {
+			// Restored in 1Password: be newer than the tagged copy so the merge drops the tag.
+			e.Times.LastModificationTime, e.Times.LastAccessTime = unix(c.exported), unix(c.exported)
+		}
+		g.Entries = append(g.Entries, e)
 		c.stats.entries++
 		if created == 0 || it.CreatedAt < created {
 			created = it.CreatedAt
@@ -525,6 +549,175 @@ func (c *converter) attachBytes(e *kp.Entry, fileName string, data []byte) {
 	bin := c.db.AddBinary(data)
 	e.Binaries = append(e.Binaries, bin.CreateReference(fileName))
 	c.stats.attachments++
+}
+
+// loadPrevious reads the existing backup, so items missing from this export
+// can be tagged instead of lingering unnoticed after the merge.
+func (c *converter) loadPrevious(path, password string) error {
+	raw, err := c.readFile("export.attributes")
+	if err != nil {
+		return fmt.Errorf("tagging deleted items needs export.attributes: %w", err)
+	}
+	var attrs struct {
+		CreatedAt int64 `json:"createdAt"`
+	}
+	if json.Unmarshal(raw, &attrs) != nil || attrs.CreatedAt == 0 {
+		return fmt.Errorf("tagging deleted items needs createdAt in export.attributes")
+	}
+
+	f, err := os.Open(path)
+	if err != nil {
+		return fmt.Errorf("open previous: %w", err)
+	}
+	defer func() { _ = f.Close() }()
+	db := kp.NewDatabase()
+	db.Credentials = kp.NewPasswordCredentials(password)
+	if err := kp.NewDecoder(f).Decode(db); err != nil {
+		return fmt.Errorf("open previous %s: %w", path, err)
+	}
+	if err := db.UnlockProtectedEntries(); err != nil {
+		return fmt.Errorf("open previous %s: %w", path, err)
+	}
+
+	c.prev, c.exported, c.prevTagged = db, attrs.CreatedAt, map[kp.UUID]bool{}
+	c.eachPrevious(func(_ *kp.Group, e *kp.Entry) {
+		if hasTag(e.Tags, deletedTag) {
+			c.prevTagged[e.UUID] = true
+		}
+	})
+	return nil
+}
+
+// eachPrevious visits every backup entry outside the recycle bin.
+func (c *converter) eachPrevious(fn func(parent *kp.Group, e *kp.Entry)) {
+	bin := c.prev.Content.Meta.RecycleBinUUID
+	var walk func(g *kp.Group)
+	walk = func(g *kp.Group) {
+		if g.UUID == bin {
+			return
+		}
+		for i := range g.Entries {
+			fn(g, &g.Entries[i])
+		}
+		for i := range g.Groups {
+			walk(&g.Groups[i])
+		}
+	}
+	for i := range c.prev.Content.Root.Groups {
+		walk(&c.prev.Content.Root.Groups[i])
+	}
+}
+
+// tagDeleted copies backup entries whose items are gone from this export into
+// the new database, tagged and dated at the export, so the merge tags them in
+// place. Only our own entries count: stableUUID makes version 5 UUIDs, while
+// entries created in KeePassXC get random version 4 ones.
+func (c *converter) tagDeleted(root *kp.Group) error {
+	if c.prev == nil {
+		return nil
+	}
+	current := map[kp.UUID]bool{}
+	for _, u := range c.items {
+		current[u] = true
+	}
+	var err error
+	c.eachPrevious(func(parent *kp.Group, e *kp.Entry) {
+		if err != nil || e.UUID[6]>>4 != 5 || current[e.UUID] {
+			return
+		}
+		if !hasTag(e.Tags, deletedTag) {
+			// Edited after the export was taken, so the export says nothing about it.
+			if e.Times.LastModificationTime != nil && e.Times.LastModificationTime.Time.Unix() >= c.exported {
+				return
+			}
+		}
+		var cp kp.Entry
+		if cp, err = c.copyEntry(*e); err != nil {
+			return
+		}
+		if !hasTag(e.Tags, deletedTag) {
+			cp.Tags = addTag(e.Tags, deletedTag)
+			cp.Times.LastModificationTime, cp.Times.LastAccessTime = unix(c.exported), unix(c.exported)
+		}
+		place(root, *parent, cp)
+		c.stats.deleted++
+	})
+	return err
+}
+
+// copyEntry clones a backup entry, re-adding its attachments, which live in
+// the backup's own binary pool. A missing attachment is an error: the merge
+// would otherwise drop it from the backup.
+func (c *converter) copyEntry(e kp.Entry) (kp.Entry, error) {
+	var err error
+	e.Values = append([]kp.ValueData(nil), e.Values...)
+	title := e.GetTitle()
+	if e.Binaries, err = c.copyBinaries(title, e.Binaries); err != nil {
+		return e, err
+	}
+	hs := make([]kp.History, len(e.Histories))
+	for i, h := range e.Histories {
+		for _, s := range h.Entries {
+			s.Values = append([]kp.ValueData(nil), s.Values...)
+			if s.Binaries, err = c.copyBinaries(title, s.Binaries); err != nil {
+				return e, err
+			}
+			hs[i].Entries = append(hs[i].Entries, s)
+		}
+	}
+	e.Histories = hs
+	return e, nil
+}
+
+func (c *converter) copyBinaries(title string, refs []kp.BinaryReference) ([]kp.BinaryReference, error) {
+	var out []kp.BinaryReference
+	for _, ref := range refs {
+		b := c.prev.FindBinary(ref.Value.ID)
+		if b == nil {
+			return nil, fmt.Errorf("previous: %s: attachment %s not found", title, ref.Name)
+		}
+		data, err := b.GetContentBytes()
+		if err != nil {
+			return nil, fmt.Errorf("previous: %s: attachment %s: %w", title, ref.Name, err)
+		}
+		out = append(out, c.db.AddBinary(data).CreateReference(ref.Name))
+	}
+	return out, nil
+}
+
+// place puts a carried-over entry in the group it has in the backup (same
+// UUID and times), so the merge leaves it where the user put it.
+func place(root *kp.Group, parent kp.Group, e kp.Entry) {
+	if parent.UUID == root.UUID {
+		root.Entries = append(root.Entries, e)
+		return
+	}
+	for i := range root.Groups {
+		if root.Groups[i].UUID == parent.UUID {
+			root.Groups[i].Entries = append(root.Groups[i].Entries, e)
+			return
+		}
+	}
+	parent.Entries, parent.Groups = []kp.Entry{e}, nil
+	root.Groups = append(root.Groups, parent)
+}
+
+// hasTag reports whether tags, separated by ',' or ';' as KeePassXC allows,
+// include tag.
+func hasTag(tags, tag string) bool {
+	for _, t := range strings.FieldsFunc(tags, func(r rune) bool { return r == ',' || r == ';' }) {
+		if strings.TrimSpace(t) == tag {
+			return true
+		}
+	}
+	return false
+}
+
+func addTag(tags, tag string) string {
+	if tags == "" {
+		return tag
+	}
+	return tags + "," + tag
 }
 
 func (c *converter) readFile(path string) ([]byte, error) {
