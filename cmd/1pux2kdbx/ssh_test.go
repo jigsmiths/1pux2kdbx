@@ -6,11 +6,13 @@ import (
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/base64"
+	"encoding/json"
 	"encoding/pem"
 	"encoding/xml"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -56,6 +58,55 @@ func attachmentBytes(t *testing.T, path, entry, name string) []byte {
 	t.Helper()
 	db, es := open(t, path)
 	return []byte(attachment(t, db, es[entry], name))
+}
+
+func TestSSHKeyParts(t *testing.T) {
+	priv, public, fp := testEd25519(t)
+	const rsa = "-----BEGIN OPENSSH PRIVATE KEY-----\nx\n-----END OPENSSH PRIVATE KEY-----\n"
+	meta := func(keyType any) map[string]json.RawMessage {
+		m := map[string]json.RawMessage{}
+		for k, v := range map[string]any{"publicKey": public, "fingerprint": fp, "keyType": keyType} {
+			m[k], _ = json.Marshal(v)
+		}
+		return m
+	}
+	names := func(fs []namedFile) (out []string) {
+		for _, f := range fs {
+			out = append(out, f.name)
+		}
+		return out
+	}
+
+	ed := sshKeyParts(sshKey{PrivateKey: priv, Metadata: meta("ed25519")})
+	if got := names(ed.files); !slices.Equal(got, []string{"id_ed25519", "id_ed25519.pkcs8"}) {
+		t.Errorf("ed25519 files = %v", got)
+	} else if string(ed.files[1].data) != priv || !bytes.HasPrefix(ed.files[0].data, []byte("-----BEGIN OPENSSH")) {
+		t.Error("ed25519: want the OpenSSH key first and the original PKCS#8 bytes second")
+	}
+	if ed.agentKey != "id_ed25519" || ed.publicKey != public || ed.fingerprint != fp {
+		t.Errorf("ed25519 = %+v", ed)
+	}
+
+	// Real exports give the RSA keyType as an object, and its key needs no conversion.
+	r := sshKeyParts(sshKey{PrivateKey: rsa, Metadata: meta(map[string]any{"rsa": "Rsa3072"})})
+	if got := names(r.files); !slices.Equal(got, []string{"id_rsa"}) || string(r.files[0].data) != rsa || r.agentKey != "id_rsa" {
+		t.Errorf("rsa = %+v", r)
+	}
+
+	none := sshKeyParts(sshKey{Metadata: meta("ed25519")})
+	if len(none.files) != 0 || none.agentKey != "" || none.publicKey != public {
+		t.Errorf("no private key = %+v, want only the public key", none)
+	}
+}
+
+func TestKeeAgentSettings(t *testing.T) {
+	var k keeAgent
+	if err := xml.Unmarshal(keeAgentSettings("id_<odd>&"), &k); err != nil {
+		t.Fatal(err)
+	}
+	if !k.Allow || !k.AddOpen || !k.RmClose || k.Location.Type != "attachment" || k.Location.Attachment != "id_<odd>&" {
+		t.Errorf("settings = %+v", k)
+	}
 }
 
 func TestSSHEd25519(t *testing.T) {

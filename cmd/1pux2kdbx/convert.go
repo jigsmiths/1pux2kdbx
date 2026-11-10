@@ -421,6 +421,30 @@ func (c *converter) totp(e *kp.Entry, secret string) {
 }
 
 func (c *converter) sshKey(e *kp.Entry, k sshKey) {
+	p := sshKeyParts(k)
+	for _, f := range p.files {
+		c.attachBytes(e, f.name, f.data)
+	}
+	if p.agentKey != "" {
+		c.keeAgent(e, p.agentKey)
+	}
+	set(e, "SSH Public Key", p.publicKey, false)
+	set(e, "SSH Fingerprint", p.fingerprint, false)
+}
+
+type namedFile struct {
+	name string
+	data []byte
+}
+
+// sshKeyEntry is what one 1Password SSH key adds to an entry.
+type sshKeyEntry struct {
+	files                  []namedFile
+	publicKey, fingerprint string
+	agentKey               string // attachment for the SSH agent; empty without a private key
+}
+
+func sshKeyParts(k sshKey) sshKeyEntry {
 	keyType := str(k.Metadata["keyType"])
 	if keyType == "" {
 		var obj map[string]json.RawMessage
@@ -432,26 +456,28 @@ func (c *converter) sshKey(e *kp.Entry, k sshKey) {
 			}
 		}
 	}
+	p := sshKeyEntry{
+		publicKey:   str(k.Metadata["publicKey"]),
+		fingerprint: str(k.Metadata["fingerprint"]),
+	}
+	if k.PrivateKey == "" {
+		return p
+	}
 	name := "id_" + keyType
 	// OpenSSH cannot load the PKCS#8 form 1Password uses for ed25519, so store
 	// it converted, plus the original bytes untouched.
 	if converted, ok := openSSHEd25519(k.PrivateKey); ok {
-		c.attachBytes(e, name, converted)
-		c.attachBytes(e, name+".pkcs8", []byte(k.PrivateKey))
+		p.files = []namedFile{{name, converted}, {name + ".pkcs8", []byte(k.PrivateKey)}}
 	} else {
-		c.attachBytes(e, name, []byte(k.PrivateKey))
+		p.files = []namedFile{{name, []byte(k.PrivateKey)}}
 	}
-	if k.PrivateKey != "" {
-		c.keeAgent(e, name)
-	}
-	set(e, "SSH Public Key", str(k.Metadata["publicKey"]), false)
-	set(e, "SSH Fingerprint", str(k.Metadata["fingerprint"]), false)
+	p.agentKey = name
+	return p
 }
 
-// keeAgent enables KeePassXC's SSH agent for the key attachment: added when
-// the database opens, removed when it closes. KeePassXC supports one key per
-// entry, so only the first key gets settings. Not counted in stats, which
-// track data from the export.
+// keeAgent enables KeePassXC's SSH agent for the key attachment. KeePassXC
+// supports one key per entry, so only the first key gets settings. Not
+// counted in stats, which track data from the export.
 func (c *converter) keeAgent(e *kp.Entry, attachment string) {
 	const settings = "KeeAgent.settings"
 	for _, ref := range e.Binaries {
@@ -459,6 +485,13 @@ func (c *converter) keeAgent(e *kp.Entry, attachment string) {
 			return
 		}
 	}
+	bin := c.db.AddBinary(keeAgentSettings(attachment))
+	e.Binaries = append(e.Binaries, bin.CreateReference(settings))
+}
+
+// keeAgentSettings has the key added to the agent when the database opens
+// and removed when it closes.
+func keeAgentSettings(attachment string) []byte {
 	var name strings.Builder
 	_ = xml.EscapeText(&name, []byte(attachment))
 	// Same layout as KeePassXC's KeeAgentSettings::toXml.
@@ -478,8 +511,7 @@ func (c *converter) keeAgent(e *kp.Entry, attachment string) {
   </Location>
 </EntrySettings>
 `
-	bin := c.db.AddBinary([]byte(doc))
-	e.Binaries = append(e.Binaries, bin.CreateReference(settings))
+	return []byte(doc)
 }
 
 // openSSHEd25519 re-encodes a PKCS#8 ed25519 key in OpenSSH's own format
