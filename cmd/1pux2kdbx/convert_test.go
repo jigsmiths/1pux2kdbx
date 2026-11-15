@@ -1,7 +1,6 @@
 package main
 
 import (
-	"archive/zip"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -9,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"testing/fstest"
 
 	kp "github.com/tobischo/gokeepasslib/v3"
 )
@@ -53,33 +53,32 @@ func write1pux(t *testing.T, path string, files map[string]string, vaults ...map
 // write1puxAt is write1pux for an export taken at the given Unix time.
 func write1puxAt(t *testing.T, path string, exported int64, files map[string]string, vaults ...map[string]any) {
 	t.Helper()
+	zipWith(t, path, exportFiles(t, exported, files, vaults...))
+}
+
+// exportFiles is the content of a .1pux, by path inside the zip.
+func exportFiles(t *testing.T, exported int64, files map[string]string, vaults ...map[string]any) map[string]string {
+	t.Helper()
 	data, err := json.Marshal(map[string]any{"accounts": []any{map[string]any{"vaults": vaults}}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	f, err := os.Create(path)
-	if err != nil {
-		t.Fatal(err)
+	out := map[string]string{
+		"export.data":       string(data),
+		"export.attributes": fmt.Sprintf(`{"version":3,"description":"1Password Unencrypted Export","createdAt":%d}`, exported),
 	}
-	defer func() { _ = f.Close() }()
-	zw := zip.NewWriter(f)
-	add := func(name, body string) {
-		w, err := zw.Create(name)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, err := w.Write([]byte(body)); err != nil {
-			t.Fatal(err)
-		}
-	}
-	add("export.data", string(data))
-	add("export.attributes", fmt.Sprintf(`{"version":3,"description":"1Password Unencrypted Export","createdAt":%d}`, exported))
 	for name, body := range files {
-		add("files/"+name, body)
+		out["files/"+name] = body
 	}
-	if err := zw.Close(); err != nil {
-		t.Fatal(err)
+	return out
+}
+
+func mapFS(files map[string]string) fstest.MapFS {
+	m := fstest.MapFS{}
+	for name, body := range files {
+		m[name] = &fstest.MapFile{Data: []byte(body)}
 	}
+	return m
 }
 
 func convertT(t *testing.T, in, out string) stats {
