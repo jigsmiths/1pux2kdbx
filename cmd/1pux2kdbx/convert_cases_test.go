@@ -24,10 +24,11 @@ func itemWith(id, title string, fields ...map[string]any) map[string]any {
 
 func convertItems(t *testing.T, items ...map[string]any) (map[string]string, stats) {
 	t.Helper()
-	dir := t.TempDir()
-	in, out := filepath.Join(dir, "a.1pux"), filepath.Join(dir, "a.kdbx")
-	write1pux(t, in, nil, vaultOf("v", "V", items...))
-	s := convertT(t, in, out)
+	out := filepath.Join(t.TempDir(), "a.kdbx")
+	s, err := convertFS(mapFS(exportFiles(t, 1750000000, nil, vaultOf("v", "V", items...))), out, "Backup", testPassword, "")
+	if err != nil {
+		t.Fatal(err)
+	}
 	_, es := open(t, out)
 	res := map[string]string{}
 	for k, e := range es {

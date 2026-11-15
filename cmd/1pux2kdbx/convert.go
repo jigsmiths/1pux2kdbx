@@ -12,7 +12,7 @@ import (
 	"encoding/pem"
 	"encoding/xml"
 	"fmt"
-	"io"
+	"io/fs"
 	"net/url"
 	"os"
 	"sort"
@@ -101,10 +101,10 @@ type stats struct{ groups, entries, attachments, skipped, deleted int }
 // deletedTag marks backup entries whose 1Password item is gone from the export.
 const deletedTag = "Deleted in 1Password"
 
-// converter carries the open zip and the database being built so the
+// converter carries the export's files and the database being built so the
 // per-item helpers stay small.
 type converter struct {
-	zip   *zip.ReadCloser
+	fsys  fs.FS
 	db    *kp.Database
 	stats stats
 	items itemIndex
@@ -150,8 +150,12 @@ func convert(in, out, name, password, previous string) (stats, error) {
 		return stats{}, fmt.Errorf("open 1pux: %w", err)
 	}
 	defer func() { _ = zr.Close() }()
+	return convertFS(zr, out, name, password, previous)
+}
 
-	c := &converter{zip: zr, db: kp.NewDatabase(kp.WithDatabaseKDBXVersion41())}
+// convertFS is convert for an export already opened as a file system.
+func convertFS(fsys fs.FS, out, name, password, previous string) (stats, error) {
+	c := &converter{fsys: fsys, db: kp.NewDatabase(kp.WithDatabaseKDBXVersion41())}
 	// gokeepasslib defaults to Argon2 with 1 MiB, far below KeePassXC. On first
 	// run this file becomes the long-lived backup and merges keep its KDF, so
 	// match KeePassXC's defaults.
@@ -559,9 +563,10 @@ func (c *converter) attach(e *kp.Entry, d document) {
 	path := "files/" + d.DocumentID + "__" + d.FileName
 	data, err := c.readFile(path)
 	if err != nil {
-		for _, f := range c.zip.File {
-			if strings.HasPrefix(f.Name, "files/"+d.DocumentID+"_") && strings.HasSuffix(f.Name, "_"+d.FileName) {
-				path = f.Name
+		files, _ := fs.ReadDir(c.fsys, "files")
+		for _, f := range files {
+			if strings.HasPrefix(f.Name(), d.DocumentID+"_") && strings.HasSuffix(f.Name(), "_"+d.FileName) {
+				path = "files/" + f.Name()
 				data, err = c.readFile(path)
 				break
 			}
@@ -753,17 +758,7 @@ func addTag(tags, tag string) string {
 }
 
 func (c *converter) readFile(path string) ([]byte, error) {
-	for _, f := range c.zip.File {
-		if f.Name == path {
-			rc, err := f.Open()
-			if err != nil {
-				return nil, err
-			}
-			defer func() { _ = rc.Close() }()
-			return io.ReadAll(rc)
-		}
-	}
-	return nil, fmt.Errorf("%s not found in archive", path)
+	return fs.ReadFile(c.fsys, path)
 }
 
 // set adds a string attribute, skipping empty values so the entry stays clean.
