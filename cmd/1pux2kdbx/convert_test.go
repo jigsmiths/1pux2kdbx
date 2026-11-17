@@ -321,7 +321,11 @@ func TestMergeEndToEnd(t *testing.T) {
 		}
 		return out
 	}
-	t.Logf("Bank history after merges: %v", snaps(again))
+	// The merge saves the old entry as history; 1Password's record of the same
+	// change must line up with it, not show the old password twice.
+	if got := snaps(again); len(got) != 1 {
+		t.Errorf("Bank history = %v, want the old password once", got)
+	}
 	if a, b := snaps(after), snaps(again); fmt.Sprint(a) != fmt.Sprint(b) {
 		t.Errorf("second merge changed Bank history %v -> %v", a, b)
 	}
