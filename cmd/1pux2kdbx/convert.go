@@ -303,12 +303,18 @@ func (c *converter) entry(u kp.UUID, it item) kp.Entry {
 
 // history turns 1Password's password history into KeePass history snapshots,
 // oldest first. 1Password keeps only old passwords, so each snapshot is the
-// current entry with that password swapped in.
+// current entry with that password swapped in. A snapshot is dated when its
+// password was set (the change before, or item creation), the time the merge
+// gives the old entry it saves, so the two line up instead of doubling.
 func history(e kp.Entry, it item) []kp.History {
 	changes := append([]passwordChange(nil), it.Details.PasswordHistory...)
 	sort.SliceStable(changes, func(i, j int) bool { return changes[i].Time < changes[j].Time })
 	var snaps []kp.Entry
+	setAt := it.CreatedAt
 	for _, ch := range changes {
+		// History can predate the item, e.g. one imported into 1Password.
+		since := min(setAt, ch.Time)
+		setAt = ch.Time
 		if ch.Value == "" {
 			continue
 		}
@@ -320,7 +326,7 @@ func history(e kp.Entry, it item) []kp.History {
 			}
 		}
 		set(&s, "Password", ch.Value, true)
-		s.Times = times(it.CreatedAt, ch.Time)
+		s.Times = times(it.CreatedAt, since)
 		snaps = append(snaps, s)
 	}
 	if len(snaps) == 0 {

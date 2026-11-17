@@ -336,7 +336,7 @@ func TestPasswordHistory(t *testing.T) {
 	for i, want := range []struct {
 		pass  string
 		mtime int64
-	}{{"first", 1700000100}, {"second", 1700000500}} {
+	}{{"first", 1700000000}, {"second", 1700000100}} { // each dated when it was set
 		h := bank.Histories[0].Entries[i]
 		if h.GetPassword() != want.pass || h.Times.LastModificationTime.Time.Unix() != want.mtime {
 			t.Errorf("snapshot %d = %q @ %d, want %q @ %d", i, h.GetPassword(),
