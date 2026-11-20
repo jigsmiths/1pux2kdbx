@@ -1,4 +1,4 @@
-name: ci
+name: CI
 
 on:
   push:
@@ -12,15 +12,15 @@ jobs:
         os: [ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
-      - uses: golangci/golangci-lint-action@v8
+      - uses: golangci/golangci-lint-action@v9
         if: matrix.os == 'ubuntu-latest'
         with:
           version: v2.14.0
-      - uses: extractions/setup-just@v2
+      - uses: extractions/setup-just@v4
       # keepassxc-cli lets the end-to-end merge test run instead of skipping
       - if: matrix.os == 'ubuntu-latest'
         run: sudo apt-get update && sudo apt-get install -y keepassxc
